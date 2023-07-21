@@ -2,12 +2,13 @@
 import { useState, useEffect } from "react";
 import { useRouter } from "next/router";
 import { useDropzone } from "react-dropzone";
+import dayjs from "dayjs";
 import { formatBytes } from "../helpers/formatBytes";
 import KeyPairGeneration from "./KeyPairGeneration";
 import { generatePassword } from "../utils/generatePassword";
 import { computePublicKey } from "../utils/computePublicKey";
 import passwordStrengthCheck from "../utils/passwordStrengthCheck";
-import { CHUNK_SIZE } from "../config/Constants";
+import { CHUNK_SIZE, DRAND_CHAINS } from "../config/Constants";
 import { makeStyles } from "@material-ui/core/styles";
 import { Alert, AlertTitle } from "@material-ui/lab";
 import Grid from "@material-ui/core/Grid";
@@ -42,6 +43,8 @@ import Collapse from "@material-ui/core/Collapse";
 import CloseIcon from "@material-ui/icons/Close";
 import AddIcon from "@material-ui/icons/Add";
 import RotateLeftIcon from "@material-ui/icons/RotateLeft";
+import { DateTimePicker, LocalizationProvider } from "@mui/x-date-pickers";
+import { AdapterDayjs } from "@mui/x-date-pickers/AdapterDayjs";
 import { getTranslations as t } from "../../locales";
 import {
   List,
@@ -209,9 +212,11 @@ let file,
   index,
   currFile = 0,
   numberOfFiles,
-  encryptionMethodState = "secretKey",
+  encryptionMethodState = "tlock",
   privateKey,
-  publicKey;
+  publicKey,
+  encryptionDate,
+  drandChain = DRAND_CHAINS.FASTNET;
 
 export default function EncryptionPanel() {
   const classes = useStyles();
@@ -236,11 +241,15 @@ export default function EncryptionPanel() {
 
   const [PrivateKey, setPrivateKey] = useState();
 
+  const [EncryptionDate, setEncryptionDate] = useState();
+
   const [showPrivateKey, setShowPrivateKey] = useState(false);
 
   const [wrongPublicKey, setWrongPublicKey] = useState(false);
 
   const [wrongPrivateKey, setWrongPrivateKey] = useState(false);
+
+  const [wrongEncryptionDate, setWrongEncryptionDate] = useState(false);
 
   const [keysError, setKeysError] = useState(false);
 
@@ -248,7 +257,7 @@ export default function EncryptionPanel() {
 
   const [shortPasswordError, setShortPasswordError] = useState(false);
 
-  const [encryptionMethod, setEncryptionMethod] = useState("secretKey");
+  const [encryptionMethod, setEncryptionMethod] = useState("tlock");
 
   const [isDownloading, setIsDownloading] = useState(false);
 
@@ -277,6 +286,7 @@ export default function EncryptionPanel() {
     setActiveStep((prevActiveStep) => prevActiveStep - 1);
     setWrongPublicKey(false);
     setWrongPrivateKey(false);
+    setWrongEncryptionDate(false);
     setKeysError(false);
     setShortPasswordError(false);
   };
@@ -292,10 +302,13 @@ export default function EncryptionPanel() {
     setPassword();
     setPublicKey();
     setPrivateKey();
+    setEncryptionDate();
     privateKey = null;
     publicKey = null;
+    encryptionDate = false;
     setWrongPublicKey(false);
     setWrongPrivateKey(false);
+    setWrongEncryptionDate(false);
     setKeysError(false);
     setShortPasswordError(false);
     setIsDownloading(false);
@@ -345,6 +358,10 @@ export default function EncryptionPanel() {
           mode,
         });
       });
+    }
+
+    if (encryptionMethodState === "tlock") {
+      setActiveStep(2);
     }
   };
 
@@ -440,6 +457,11 @@ export default function EncryptionPanel() {
     }
   };
 
+  const handleEncryptionDateInput = (selectedDate) => {
+    encryptionDate = selectedDate;
+    setEncryptionDate(selectedDate);
+  };
+
   const handleEncryptedFilesDownload = async (e) => {
     numberOfFiles = Files.length;
     prepareFile();
@@ -477,6 +499,12 @@ export default function EncryptionPanel() {
           reg.active.postMessage({ cmd: "requestEncryption", password });
         });
       }
+
+      if (encryptionMethodState === "tlock") {
+        navigator.serviceWorker.ready.then((reg) => {
+          reg.active.postMessage({ cmd: "requestTLockClient", encryptionDate: encryptionDate.valueOf(), drandChain });
+        });
+      }
     } else {
       // console.log("out of files")
     }
@@ -500,6 +528,16 @@ export default function EncryptionPanel() {
             reg.active.postMessage(
               {
                 cmd: "asymmetricEncryptFirstChunk",
+                chunk,
+                last: index >= file.size,
+              },
+              [chunk]
+            );
+          }
+          if (method === "tlock") {
+            reg.active.postMessage(
+              {
+                cmd: "tlockEncryptFirstChunk",
                 chunk,
                 last: index >= file.size,
               },
@@ -576,6 +614,10 @@ export default function EncryptionPanel() {
           setKeysError(true);
           setKeysErrorMessage(t("invalid_keys_input"));
           break;
+        
+        case "wrongDateInput":
+          setWrongEncryptionDate(true);
+          break;
 
         case "keysGenerated":
           startEncryption("secretKey");
@@ -583,6 +625,10 @@ export default function EncryptionPanel() {
 
         case "keyPairReady":
           startEncryption("publicKey");
+          break;
+
+        case "tlockClientReady":
+          startEncryption("tlock");
           break;
 
         case "filePreparedEnc":
@@ -792,11 +838,13 @@ export default function EncryptionPanel() {
           >
             {encryptionMethod === "secretKey"
               ? t("enter_password_enc")
-              : t("enter_keys_enc")}
+              : encryptionMethod === "publicKey"
+              ? t("enter_keys_enc")
+              : t("enter_time_enc")}
           </StepLabel>
 
           <StepContent>
-            <FormControl
+            {/* <FormControl
               component="fieldset"
               style={{ float: "right", marginBottom: "15px" }}
             >
@@ -820,8 +868,15 @@ export default function EncryptionPanel() {
                   labelPlacement="end"
                   onChange={() => handleRadioChange("publicKey")}
                 />
+                <FormControlLabel
+                  value="tlock"
+                  control={<Radio color="default" />}
+                  label={t("tlock")}
+                  labelPlacement="end"
+                  onChange={() => handleRadioChange("tlock")}
+                />
               </RadioGroup>
-            </FormControl>
+            </FormControl> */}
 
             {encryptionMethod === "secretKey" && (
               <TextField
@@ -988,6 +1043,25 @@ export default function EncryptionPanel() {
               </>
             )}
 
+            {encryptionMethod === "tlock" && (
+              <>
+                <LocalizationProvider dateAdapter={AdapterDayjs}>
+                  <DateTimePicker
+                    required
+                    id="encTimeInput"
+                    error={wrongEncryptionDate}
+                    label={wrongEncryptionDate ? "Wrong Encryption Date" : t("required")}
+                    helperText={t("your_time_enc")}
+                    variant="outlined"
+                    // minDateTime={dayjs().subtract(1, 'hour')}
+                    value={EncryptionDate ? EncryptionDate : ""}
+                    onChange={(value) => handleEncryptionDateInput(value)}
+                    slotProps={{ textField: { fullWidth: true } }}
+                  />
+                </LocalizationProvider>
+              </>
+            )}
+
             <div className={classes.actionsContainer} style={{ marginTop: 15 }}>
               <div>
                 <Grid container spacing={1}>
@@ -1006,7 +1080,8 @@ export default function EncryptionPanel() {
                       disabled={
                         (encryptionMethod === "secretKey" && !Password) ||
                         (encryptionMethod === "publicKey" &&
-                          (!PublicKey || !PrivateKey))
+                          (!PublicKey || !PrivateKey)) ||
+                        (encryptionMethod === "tlock" && !EncryptionDate)
                       }
                       variant="contained"
                       onClick={handleMethodStep}
@@ -1070,7 +1145,7 @@ export default function EncryptionPanel() {
                   <Button
                     disabled={
                       isDownloading ||
-                      (!Password && !PublicKey && !PrivateKey) ||
+                      (!Password && !PublicKey && !PrivateKey && !EncryptionDate) ||
                       Files.length === 0
                     }
                     variant="contained"

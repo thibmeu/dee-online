@@ -39,12 +39,12 @@ export default function NavAppBar() {
               <VersionBadge />
             </Typography>
 
-            <Button color="inherit" href="/about/" className={classes.button}>
+            {/* <Button color="inherit" href="/about/" className={classes.button}>
               {t("about")}
-            </Button>
+            </Button> */}
 
             <IconButton
-              href="https://github.com/sh-dv/hat.sh"
+              href="https://github.com/thibmeu"
               target="_blank"
               rel="noopener"
             >

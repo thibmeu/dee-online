@@ -7,7 +7,7 @@ self.addEventListener("activate", (event) =>
 
 const config = require("./config");
 
-let streamController, fileName, theKey, state, header, salt, encRx, encTx, decRx, decTx;
+let streamController, fileName, theKey, state, header, salt, encRx, encTx, decRx, decTx, encTLock, decTLock;
 
 self.addEventListener("fetch", (e) => {
   // console.log(e); // log fetch event
@@ -26,12 +26,17 @@ self.addEventListener("fetch", (e) => {
   }
 });
 
-const _sodium = require("libsodium-wrappers");
+import { roundAt as drandRoundAt, roundTime as drandRoundTime } from "drand-client";
+import { default as wasmbin } from '../../tlock-rs/tlock_age/pkg/tlock_age_bg.wasm';
+import _tlock_init, * as tlock from "tlock-age";
+import _sodium from "libsodium-wrappers";
 (async () => {
   await _sodium.ready;
+  await _tlock_init(wasmbin);
   const sodium = _sodium;
 
   addEventListener("message", (e) => {
+    console.log(e.data.cmd);
     switch (e.data.cmd) {
       case "prepareFileNameEnc":
         assignFileNameEnc(e.data.fileName, e.source);
@@ -48,9 +53,17 @@ const _sodium = require("libsodium-wrappers");
       case "requestEncKeyPair":
         encKeyPair(e.data.privateKey, e.data.publicKey, e.data.mode, e.source);
         break;
+      
+      case "requestTLockClient":
+        encTLockClient(e.data.encryptionDate, e.data.drandChain, e.data.mode, e.source);
+        break;
 
       case "asymmetricEncryptFirstChunk":
         asymmetricEncryptFirstChunk(e.data.chunk, e.data.last, e.source);
+        break;
+      
+      case "tlockEncryptFirstChunk":
+        tlockEncryptFirstChunk(e.data.chunk, e.data.last, e.source);
         break;
 
       case "encryptFirstChunk":
@@ -62,7 +75,11 @@ const _sodium = require("libsodium-wrappers");
         break;
 
       case "checkFile":
-        checkFile(e.data.signature, e.data.legacy, e.source);
+        checkFile(e.data.signature, e.data.legacy, e.data.header, e.source);
+        break;
+      
+      case "checkTLockHeader":
+        checkTLockHeader(e.data.round, e.data.drandChain, e.source);
         break;
 
       case "requestTestDecryption":
@@ -86,6 +103,16 @@ const _sodium = require("libsodium-wrappers");
           e.source
         );
         break;
+      
+      case "requestDecTLock":
+        requestDecTLock(
+          e.data.drandChain,
+          e.data.encryptionDate,
+          e.data.decFileBuff,
+          e.data.mode,
+          e.source,
+        );
+        break;
 
       case "requestDecryption":
         decKeyGenerator(
@@ -103,6 +130,10 @@ const _sodium = require("libsodium-wrappers");
 
       case "decryptRestOfChunks":
         decryptChunks(e.data.chunk, e.data.last, e.source);
+        break;
+      
+      case "decryptTLock":
+        decryptTLock(e.data.chunk, e.data.last, e.source);
         break;
 
       case "pingSW":
@@ -173,6 +204,23 @@ const _sodium = require("libsodium-wrappers");
     }
   };
 
+  const encTLockClient = (date, drandChain, mode, client) => {
+    try {
+      const hex_decode = (s) =>
+        Uint8Array.from(s.match(/.{1,2}/g).map((b) => parseInt(b, 16)));
+
+      const round = drandRoundAt(date, drandChain);
+      encTLock = {
+        round: BigInt(round),
+        chain_hash: hex_decode(drandChain.hash),
+        public_key: hex_decode(drandChain.public_key),
+      };
+      client.postMessage({ reply: "tlockClientReady" });
+    } catch (error) {
+      client.postMessage({ reply: "wrongDateInput" });
+    }
+  };
+
   const asymmetricEncryptFirstChunk = (chunk, last, client) => {
     setTimeout(function () {
       if (!streamController) {
@@ -197,6 +245,28 @@ const _sodium = require("libsodium-wrappers");
       );
 
       streamController.enqueue(new Uint8Array(encryptedChunk));
+
+      if (last) {
+        streamController.close();
+        client.postMessage({ reply: "encryptionFinished" });
+      }
+
+      if (!last) {
+        client.postMessage({ reply: "continueEncryption" });
+      }
+    }, 500);
+  };
+
+  const tlockEncryptFirstChunk = (chunk, last, client) => {
+    setTimeout(function () {
+      const encoded = tlock.encrypt(
+        new Uint8Array(chunk),
+        encTLock.chain_hash,
+        encTLock.public_key,
+        encTLock.round,
+      );
+
+      streamController.enqueue(encoded);
 
       if (last) {
         streamController.close();
@@ -287,19 +357,44 @@ const _sodium = require("libsodium-wrappers");
     }
   };
 
-  const checkFile = (signature, legacy, client) => {
+  const checkFile = (signature, legacy, header, client) => {
     if (config.decoder.decode(signature) === config.sigCodes["v2_symmetric"]) {
-      client.postMessage({ reply: "secretKeyEncryption" });
+      client.postMessage({ reply: "badFile" });
     } else if (
       config.decoder.decode(signature) === config.sigCodes["v2_asymmetric"]
     ) {
-      client.postMessage({ reply: "publicKeyEncryption" });
+      client.postMessage({ reply: "badFile" });
     } else if (config.decoder.decode(legacy) === config.sigCodes["v1"]) {
-      client.postMessage({ reply: "oldVersion" });
+      client.postMessage({ reply: "badFile" });
     } else {
+      try {
+        const hex_encode = (u) =>
+          Array.from(u).map((b) => b.toString(16).padStart(2, 0)).join('')
+        const h = tlock.decrypt_header(new Uint8Array(header));
+        client.postMessage({
+          reply: "tlockHeaderReady",
+          hash: hex_encode(h.hash),
+          round: Number(h.round),
+        });
+        return;
+      } catch (error) {
+        console.log(error)
+      }
       client.postMessage({ reply: "badFile" });
     }
   };
+
+  const checkTLockHeader = (round, chain, client) => {
+    try {
+      const date = drandRoundTime(chain, round);
+      client.postMessage({
+        reply: "tlockEncryption",
+        date,
+      });
+    } catch (error) {
+      console.log(error);
+    }
+  }
 
   const requestDecKeyPair = (ssk, cpk, header, decFileBuff, mode, client) => {
     try {
@@ -370,6 +465,52 @@ const _sodium = require("libsodium-wrappers");
       client.postMessage({ reply: "wrongDecKeyInput" });
     }
   };
+
+  const requestDecTLock = (chain, date, decFileBuff, mode, client) => {
+    if (mode === "derive") {
+      client.postMessage({ reply: "decTLockGenerated" });
+      return;
+    }
+
+    const round = drandRoundAt(date, chain);
+
+    // TODO: this is the place we need to make an external call
+    fetch(`https://drand.cloudflare.com/${chain.hash}/public/${round}`)
+      .then(r => r.json())
+      .then(r => r.signature)
+      .then((hex_signature) => {
+        const hex_decode = (s) =>
+          Uint8Array.from(s.match(/.{1,2}/g).map((b) => parseInt(b, 16)));
+
+        const hash = hex_decode(chain.hash);
+        const signature = hex_decode(hex_signature);
+
+        decTLock = { hash, signature };
+
+        if (mode === "test") {
+          client.postMessage({ reply: "readyToDecrypt" });
+        }
+      }).catch(e =>
+        client.postMessage({ reply: "wrongDecDate" })
+      );
+  }
+
+  const decryptTLock = (chunk, last, client) => {
+    setTimeout(function () {
+      const src = new Uint8Array(chunk);
+
+      const decryptedChunk = tlock.decrypt(src, decTLock.hash, decTLock.signature);
+      streamController.enqueue(decryptedChunk);
+
+      if (last) {
+        streamController.close();
+        client.postMessage({ reply: "decryptionFinished" });
+      }
+      if (!last) {
+        client.postMessage({ reply: "continueDecryption" });
+      }
+    }, 500);
+  }
 
   const testDecryption = (
     password,

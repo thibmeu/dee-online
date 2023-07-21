@@ -157,16 +157,25 @@ export default function Footer() {
           <Typography variant="body1">
             Built and developed by{" "}
             <Link
-              href="https://github.com/sh-dv"
+              href="https://github.com/thibmeu"
               target="_blank"
               rel="noopener"
               color="inherit"
             >
-              {"sh-dv"}
+              {"thibmeu"}
+            </Link>
+            {" — Template by "}
+            <Link
+              href="https://hat.sh"
+              target="_blank"
+              rel="noopener"
+              color="inherit"
+            >
+              {"Hat.sh"}
             </Link>
           </Typography>
 
-          <Chip
+          {/* <Chip
             size="small"
             className={classes.chip}
             avatar={
@@ -287,10 +296,10 @@ export default function Footer() {
                 {t("close")}
               </Button>
             </DialogActions>
-          </Dialog>
+          </Dialog> */}
         </Container>
       </footer>
-      <Hidden xsDown>
+      {/* <Hidden xsDown>
         <Snackbar
           style={{ zIndex: 1 }}
           anchorOrigin={{
@@ -334,7 +343,7 @@ export default function Footer() {
             {t("donation_message")}
           </Alert>
         </Snackbar>
-      </Hidden>
+      </Hidden> */}
     </div>
   );
 }

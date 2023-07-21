@@ -12,9 +12,7 @@ function MyApp({ Component, pageProps }) {
     <>
       <Head>
         <title>
-          {"Hat.sh"}
-          {" - "}
-          {t("sub_title")}
+          {"dee online"}
         </title>
         <link rel="icon" href="/favicon.ico" />
 

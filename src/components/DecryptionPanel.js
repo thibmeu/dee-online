@@ -7,6 +7,7 @@ import { formatName } from "../helpers/formatName";
 import {
   crypto_secretstream_xchacha20poly1305_ABYTES,
   CHUNK_SIZE,
+  DRAND_CHAINS,
 } from "../config/Constants";
 import { Alert, AlertTitle } from "@material-ui/lab";
 import { makeStyles } from "@material-ui/core/styles";
@@ -42,6 +43,9 @@ import {
   ListItemText,
 } from "@material-ui/core";
 import DeleteIcon from "@material-ui/icons/Delete";
+import dayjs from "dayjs";
+import { DateTimeField, LocalizationProvider } from "@mui/x-date-pickers";
+import { AdapterDayjs } from "@mui/x-date-pickers/AdapterDayjs";
 
 const useStyles = makeStyles((theme) => ({
   root: {
@@ -202,7 +206,8 @@ let file,
   numberOfFiles,
   decryptionMethodState,
   privateKey,
-  publicKey;
+  publicKey,
+  drandChain;
 
 export default function DecryptionPanel() {
   const classes = useStyles();
@@ -219,11 +224,13 @@ export default function DecryptionPanel() {
 
   const [Password, setPassword] = useState();
 
-  const [decryptionMethod, setDecryptionMethod] = useState("secretKey");
+  const [decryptionMethod, setDecryptionMethod] = useState("tlock");
 
   const [PublicKey, setPublicKey] = useState();
 
   const [PrivateKey, setPrivateKey] = useState();
+
+  const [EncryptionDate, setEncryptionDate] = useState();
 
   const [showPrivateKey, setShowPrivateKey] = useState(false);
 
@@ -243,11 +250,15 @@ export default function DecryptionPanel() {
 
   const [wrongPassword, setWrongPassword] = useState(false);
 
+  const [wrongDate, setWrongDate] = useState(false);
+
   const [isCheckingFile, setIsCheckingFile] = useState(false);
 
   const [isTestingPassword, setIsTestingPassword] = useState(false);
 
   const [isTestingKeys, setIsTestingKeys] = useState(false);
+
+  const [isTestingDate, setIsTestingDate] = useState(false);
 
   const [showPassword, setShowPassword] = useState(false);
 
@@ -275,6 +286,7 @@ export default function DecryptionPanel() {
     setWrongPrivateKey(false);
     setKeysError(false);
     setIsTestingKeys(false);
+    setIsTestingDate(false);
     setIsTestingPassword(false);
   };
 
@@ -289,6 +301,8 @@ export default function DecryptionPanel() {
     setPublicKey();
     setPrivateKey();
     privateKey = null;
+    drandChain = null;
+    setEncryptionDate();
     publicKey = null;
     setWrongPublicKey(false);
     setWrongPrivateKey(false);
@@ -364,11 +378,13 @@ export default function DecryptionPanel() {
       Promise.all([
         file.slice(0, 11).arrayBuffer(), //signatures
         file.slice(0, 22).arrayBuffer(), //v1 signature
-      ]).then(([signature, legacy]) => {
+        file.arrayBuffer(), //tlock age header
+      ]).then(([signature, legacy, header]) => {
         reg.active.postMessage({
           cmd: "checkFile",
           signature,
           legacy,
+          header,
         });
       });
     });
@@ -408,6 +424,7 @@ export default function DecryptionPanel() {
         testFilesDecryption();
       } else {
         setIsTestingKeys(false);
+        setIsTestingDate(false);
         setIsTestingPassword(false);
         handleNext();
         resetCurrFile();
@@ -476,6 +493,25 @@ export default function DecryptionPanel() {
             privateKey,
             publicKey,
             header,
+            decFileBuff,
+            mode,
+          });
+        });
+      });
+    }
+
+    if (decryptionMethodState === "tlock") {
+      navigator.serviceWorker.ready.then((reg) => {
+        setIsTestingDate(true);
+
+        let mode = "test";
+
+        file.arrayBuffer().then((chunk) => {
+          decFileBuff = chunk;
+          reg.active.postMessage({
+            cmd: "requestDecTLock",
+            drandChain,
+            encryptionDate: EncryptionDate.valueOf(),
             decFileBuff,
             mode,
           });
@@ -592,17 +628,41 @@ export default function DecryptionPanel() {
           });
         });
       }
+      if (decryptionMethodState === "tlock") {
+        navigator.serviceWorker.ready.then((reg) => {
+          file.arrayBuffer().then((chunk) => {
+            let mode = "derive";
+
+            reg.active.postMessage({
+              cmd: "requestDecTLock",
+              mode,
+            })
+          })
+        })
+      }
     } else {
       // console.log("out of files")
     }
   };
 
   const startDecryption = (method) => {
+    file = files[currFile];
+
+    if (method === "tlock") {
+      navigator.serviceWorker.ready.then((reg) => {
+        file.arrayBuffer().then((chunk) => {
+          reg.active.postMessage(
+            { cmd: "decryptTLock", chunk, last: true },
+            [chunk]
+          );
+        })
+      });
+      return
+    }
+
     let startIndex;
     if (method === "secretKey") startIndex = 51;
     if (method === "publicKey") startIndex = 35;
-
-    file = files[currFile];
 
     navigator.serviceWorker.ready.then((reg) => {
       file
@@ -720,6 +780,44 @@ export default function DecryptionPanel() {
             resetCurrFile();
           }
           break;
+        
+        case "tlockHeaderReady":
+          for (const [name, info] of Object.entries(DRAND_CHAINS)) {
+            if (info.hash === e.data.hash) {
+              drandChain = info;
+              break;
+            }
+          }
+          e.source.postMessage({
+            cmd: "checkTLockHeader",
+            drandChain,
+            round: e.data.round,
+          })
+
+
+        case "tlockEncryption":
+          setEncryptionDate(dayjs(e.data.date));
+
+          if (numberOfFiles > 1) {
+            if (
+              decryptionMethodState &&
+              decryptionMethodState !== "tlock"
+            ) {
+              checkFileMixUp();
+              return;
+            } else {
+              decryptionMethodState = "tlock";
+              setDecryptionMethod("tlock");
+              checkFilesQueue();
+            }
+          } else {
+            setDecryptionMethod("tlock");
+            decryptionMethodState = "tlock";
+            setActiveStep(1);
+            setIsCheckingFile(false);
+            resetCurrFile();
+          }
+          break;
 
         case "wrongDecPrivateKey":
           setWrongPrivateKey(true);
@@ -729,6 +827,11 @@ export default function DecryptionPanel() {
         case "wrongDecPublicKey":
           setWrongPublicKey(true);
           setIsTestingKeys(false);
+          break;
+
+        case "wrongDecDate":
+          setWrongDate(true);
+          setIsTestingDate(false);
           break;
 
         case "wrongDecKeys":
@@ -763,6 +866,7 @@ export default function DecryptionPanel() {
             checkFilesTestQueue();
           } else {
             setIsTestingKeys(false);
+            setIsTestingDate(false);
             setIsTestingPassword(false);
             handleNext();
             resetCurrFile();
@@ -775,6 +879,10 @@ export default function DecryptionPanel() {
 
         case "decKeysGenerated":
           startDecryption("secretKey");
+          break;
+
+        case "decTLockGenerated":
+          startDecryption("tlock");
           break;
 
         case "continueDecryption":
@@ -1002,7 +1110,8 @@ export default function DecryptionPanel() {
           >
             {decryptionMethod === "secretKey"
               ? t("enter_password_dec")
-              : t("enter_keys_dec")}
+              : decryptionMethod === "publicKey" ? t("enter_keys_dec") :
+              t("confirm_tlock_dec")}
           </StepLabel>
           <StepContent>
             {decryptionMethod === "secretKey" && (
@@ -1139,13 +1248,30 @@ export default function DecryptionPanel() {
               </>
             )}
 
+            {decryptionMethod === "tlock" && (
+              <>
+                <LocalizationProvider dateAdapter={AdapterDayjs}>
+                  <DateTimeField
+                    id="date-dec"
+                    type="text"
+                    disabled
+                    label={t("date_dec")}
+                    variant="outlined"
+                    value={EncryptionDate ? EncryptionDate : dayjs()}
+                    fullWidth
+                    style={{ marginBottom: "15px" }}
+                  />
+                </LocalizationProvider>
+              </>
+            )}
+
             <div className={classes.actionsContainer}>
               <div>
                 <Grid container spacing={1}>
                   <Grid item>
                     <Button
                       disabled={
-                        activeStep === 0 || isTestingPassword || isTestingKeys
+                        activeStep === 0 || isTestingPassword || isTestingKeys || isTestingDate
                       }
                       onClick={handleBack}
                       className={classes.backButton}
@@ -1160,14 +1286,16 @@ export default function DecryptionPanel() {
                         (decryptionMethod === "secretKey" && !Password) ||
                         (decryptionMethod === "publicKey" &&
                           (!PublicKey || !PrivateKey)) ||
+                        (decryptionMethod === 'tlock' && !EncryptionDate) ||
                         isTestingPassword ||
-                        isTestingKeys
+                        isTestingKeys ||
+                        isTestingDate
                       }
                       variant="contained"
                       onClick={testFilesDecryption}
                       className={`${classes.nextButton} nextBtnHs submitKeysDec`}
                       startIcon={
-                        (isTestingPassword || isTestingKeys) && (
+                        (isTestingPassword || isTestingKeys || isTestingDate) && (
                           <CircularProgress
                             size={24}
                             className={classes.buttonProgress}
@@ -1184,6 +1312,10 @@ export default function DecryptionPanel() {
                         ? `${currFileState + 1}/${numberOfFiles} ${t(
                             "testing_keys"
                           )}`
+                        : isTestingDate
+                        ? `${currFileState + 1}/${numberOfFiles} ${t(
+                          "testing_date"
+                        )}`
                         : t("next")}
                     </Button>
                   </Grid>
@@ -1216,6 +1348,17 @@ export default function DecryptionPanel() {
                         </Alert>
                       )}
                     </>
+                  )}
+                  
+
+                {decryptionMethod === "tlock" &&
+                  Files.length > 1 &&
+                  wrongDate &&
+                  !isTestingDate && (
+                    <Alert severity="error">
+                      <strong>{Files[currFile].name}</strong>{" "}
+                      {t("file_has_early_date")}
+                    </Alert>
                   )}
               </div>
             </div>
@@ -1262,7 +1405,7 @@ export default function DecryptionPanel() {
                   <Button
                     disabled={
                       isDownloading ||
-                      (!Password && !PublicKey && !PrivateKey) ||
+                      (!Password && !PublicKey && !PrivateKey && !EncryptionDate) ||
                       Files.length === 0
                     }
                     variant="contained"
