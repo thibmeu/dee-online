@@ -138,6 +138,7 @@ const en_US = {
   your_private_key_dec: "Your Private Key",
   enter_private_key_dec: "Enter your private key",
   date_dec: "Decryption date",
+  relative_time: "Relative decryption time",
   decrypted_files: "Decrypted Files",
   download_decrypted_files: "Download decrypted files",
   success_downloaded_files_dec: "You have successfully downloaded the decrypted files!",

@@ -44,7 +44,7 @@ export default function NavAppBar() {
             </Button> */}
 
             <IconButton
-              href="https://github.com/thibmeu"
+              href="https://github.com/thibmeu/dee-online"
               target="_blank"
               rel="noopener"
             >

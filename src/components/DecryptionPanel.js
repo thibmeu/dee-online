@@ -44,8 +44,11 @@ import {
 } from "@material-ui/core";
 import DeleteIcon from "@material-ui/icons/Delete";
 import dayjs from "dayjs";
+import relativetime from "dayjs/plugin/relativeTime";
 import { DateTimeField, LocalizationProvider } from "@mui/x-date-pickers";
 import { AdapterDayjs } from "@mui/x-date-pickers/AdapterDayjs";
+
+dayjs.extend(relativetime);
 
 const useStyles = makeStyles((theme) => ({
   root: {
@@ -830,6 +833,7 @@ export default function DecryptionPanel() {
           break;
 
         case "wrongDecDate":
+          setEncryptionDate(dayjs(e.data.date));
           setWrongDate(true);
           setIsTestingDate(false);
           break;
@@ -1250,18 +1254,25 @@ export default function DecryptionPanel() {
 
             {decryptionMethod === "tlock" && (
               <>
-                <LocalizationProvider dateAdapter={AdapterDayjs}>
-                  <DateTimeField
-                    id="date-dec"
-                    type="text"
-                    disabled
-                    label={t("date_dec")}
-                    variant="outlined"
-                    value={EncryptionDate ? EncryptionDate : dayjs()}
-                    fullWidth
-                    style={{ marginBottom: "15px" }}
-                  />
-                </LocalizationProvider>
+                <TextField
+                  id="date-dec"
+                  type="text"
+                  readonly
+                  label={t("date_dec")}
+                  variant="outlined"
+                  value={EncryptionDate ? EncryptionDate.format("LLLL") : ""}
+                  fullWidth
+                  style={{ marginBottom: "15px" }}
+                />
+                <TextField
+                  type="text"
+                  readonly
+                  label={t("relative_time")}
+                  variant="outlined"
+                  value={EncryptionDate ? dayjs().to(EncryptionDate) : ""}
+                  fullWidth
+                  style={{ marginBottom: "15px" }}
+                />
               </>
             )}
 
@@ -1286,7 +1297,7 @@ export default function DecryptionPanel() {
                         (decryptionMethod === "secretKey" && !Password) ||
                         (decryptionMethod === "publicKey" &&
                           (!PublicKey || !PrivateKey)) ||
-                        (decryptionMethod === 'tlock' && !EncryptionDate) ||
+                        (decryptionMethod === "tlock" && wrongDate) ||
                         isTestingPassword ||
                         isTestingKeys ||
                         isTestingDate
@@ -1352,7 +1363,7 @@ export default function DecryptionPanel() {
                   
 
                 {decryptionMethod === "tlock" &&
-                  Files.length > 1 &&
+                  Files[currFile] &&
                   wrongDate &&
                   !isTestingDate && (
                     <Alert severity="error">

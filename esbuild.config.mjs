@@ -31,7 +31,7 @@ let wasmPlugin = {
 await esbuild.build({
   entryPoints: ['service-worker/sw.js'],
   bundle: true,
-  minify: false,
+  minify: true,
   format: 'esm',
   outfile: 'public/service-worker.js',
   plugins: [wasmPlugin],

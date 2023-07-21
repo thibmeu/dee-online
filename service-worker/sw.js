@@ -36,7 +36,7 @@ import _sodium from "libsodium-wrappers";
   const sodium = _sodium;
 
   addEventListener("message", (e) => {
-    console.log(e.data.cmd);
+    // console.log(e.data.cmd);
     switch (e.data.cmd) {
       case "prepareFileNameEnc":
         assignFileNameEnc(e.data.fileName, e.source);
@@ -387,10 +387,17 @@ import _sodium from "libsodium-wrappers";
   const checkTLockHeader = (round, chain, client) => {
     try {
       const date = drandRoundTime(chain, round);
-      client.postMessage({
-        reply: "tlockEncryption",
-        date,
-      });
+      if (date > Date.now()) {
+        client.postMessage({
+          reply: "wrongDecDate",
+          date,
+        });
+      } else {
+        client.postMessage({
+          reply: "tlockEncryption",
+          date,
+        });
+      }
     } catch (error) {
       console.log(error);
     }
